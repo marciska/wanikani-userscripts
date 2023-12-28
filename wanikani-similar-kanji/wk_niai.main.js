@@ -21,7 +21,7 @@ function WK_Niai()
             {"id": "override_db",    "base_score": 0.0}
         ],
         "user_level": 99,
-        "min_score": 0.4
+        "min_score": 0.3
     };
 }
 // #############################################################################
@@ -37,7 +37,7 @@ function WK_Niai()
         this.log(`Injecting similar kanji section (callback works).`);
 
         let niaiSection = this.createNiaiSection()[0].children;
-        let section = injectorState.injector.append([...niaiSection[0].childNodes], niaiSection[1], {injectImmediately: true, sectionName: `Visually Similar Kanji`});
+        let section = injectorState.injector.append([...niaiSection[0].childNodes], niaiSection[1], {injectImmediately: true, sectionName: `Niai Visually Similar Kanji`});
         if (!section) return;
         section.classList.add(GM_info.script.namespace, `col1`);
         section.id = `niai_section`;
@@ -107,83 +107,8 @@ function WK_Niai()
         return result;
     };
 
-    const sort_by_level = function(kanjiA,kanjiB)
-    {
-        // kanjis not in DB -> move to end
-        const kanjiA_inDB = this.ndb.isKanjiInDB(kanjiA);
-        const kanjiB_inDB = this.ndb.isKanjiInDB(kanjiB);
-        if (!kanjiA_inDB && !kanjiB_inDB)
-            return 0;
-        else if (kanjiA_inDB && !kanjiB_inDB)
-            return -1;
-        else if (!kanjiA_inDB && kanjiB_inDB)
-            return 1;
-
-        // sort kanji by ascending level
-        // note: treat kanjis not in WK as level over 60
-        const kanjiA_level = this.ndb.isKanjiInWK(kanjiA) ? this.ndb.getInfo(kanjiA).level : 99;
-        const kanjiB_level = this.ndb.isKanjiInWK(kanjiB) ? this.ndb.getInfo(kanjiB).level : 99;
-        if (kanjiA_level < kanjiB_level)
-            return -1;
-        else if (kanjiA_level > kanjiB_level)
-            return 1;
-        else
-        {
-            // both kanjis have same level, so sort them by score
-            const kanjiA_score = this.ndb.getInfo(kanjiA).score;
-            const kanjiB_score = this.ndb.getInfo(kanjiB).score;
-            if (kanjiA_score < kanjiB_score)
-                return 1;
-            if (kanjiA_score > kanjiB_score)
-                return -1;
-            return 0;
-        }
-    };
-
-    const sort_by_locked_score = function(kanjiA,kanjiB)
-    {
-        // kanjis not in DB -> move to end
-        const kanjiA_inDB = this.ndb.isKanjiInDB(kanjiA);
-        const kanjiB_inDB = this.ndb.isKanjiInDB(kanjiB);
-        if (!kanjiA_inDB && !kanjiB_inDB)
-            return 0;
-        else if (kanjiA_inDB && !kanjiB_inDB)
-            return -1;
-        else if (!kanjiA_inDB && kanjiB_inDB)
-            return 1;
-
-        // kanjis locked should be shown last
-        // note: treat kanjis not in WK as locked too
-        const kanjiA_islocked = this.ndb.isKanjiInWK(kanjiA) ? this.ndb.isKanjiLocked(kanjiA,this.settings.user_level) : true;
-        const kanjiB_islocked = this.ndb.isKanjiInWK(kanjiB) ? this.ndb.isKanjiLocked(kanjiB,this.settings.user_level) : true;
-        const kanjiA_score = this.ndb.getInfo(kanjiA).score;
-        const kanjiB_score = this.ndb.getInfo(kanjiB).score;
-        if (!kanjiA_islocked && !kanjiB_islocked)
-        {
-            // both kanjis are unlocked, so sort them by score
-            if (kanjiA_score < kanjiB_score)
-                return 1;
-            if (kanjiA_score > kanjiB_score)
-                return -1;
-            return 0;
-        }
-        else if (kanjiA_islocked && !kanjiB_islocked)
-            return 1; // move locked kanji to end
-        else if (!kanjiA_islocked && kanjiB_islocked)
-            return -1; // move locked kanji to end
-        else
-        {
-            // both kanjis are locked, so sort them by score
-            if (kanjiA_score < kanjiB_score)
-                return 1;
-            if (kanjiA_score > kanjiB_score)
-                return -1;
-            return 0;
-        }
-    };
-
     // #########################################################################
-    WK_Niai.prototype.populateNiaiSection = function(kanji, curPage)
+    WK_Niai.prototype.populateNiaiSection = function(kanji, curPage = this.wkItemInfoRef.currentState.on)
     {
         $(`#niai_similar_grid`).empty();
 
@@ -192,12 +117,7 @@ function WK_Niai()
         if (this.settings.use_alt)
             use_sources = [...this.settings.alt_sources, ...use_sources];
 
-        // sort similar kanji by: score, level, ...
-        var similar_kanji = this.ndb.getSimilar(kanji,this.settings.user_level,use_sources,this.settings.min_score);
-        similar_kanji.sort(sort_by_locked_score.bind(this));
-        // similar_kanji.sort(sort_by_locked_level.bind(this));
-
-        const similar_list = [kanji,...similar_kanji];
+        const similar_list = [kanji,...this.ndb.getSimilar(kanji,this.settings.user_level,use_sources,this.settings.min_score)];
         let char_list = [];
         similar_list.forEach(
             function(sim_kanji, i)
@@ -247,8 +167,10 @@ function WK_Niai()
         else
             $(`#niai_reset_similar_btn`).addClass(`disabled`);
 
-        if (curPage !== `itemInfo`)
+        if (curPage !== `itemPage`)
             $(`.niai_similar_link`).attr(`target`, `_blank`);
+        else
+            $(`.niai_similar_link:not(li.notInWK a)`).attr(`data-turbo-frame`, `_blank`);
 
         $(`li.notInWK a`).attr(`target`, `_blank`);
         // #####################################################################
@@ -261,10 +183,10 @@ function WK_Niai()
     // #########################################################################
 
     // #########################################################################
-    WK_Niai.prototype.init = function()
+    WK_Niai.prototype.init = async function()
     {
         GM_addStyle(GM_getResourceText(`niai_style`)
-                        .replace(/\.wk_namespace/g, `#niai_section#niai_section#niai_section#niai_section`));
+                        .replace(/\.wk_namespace/g, `#niai_section`));
 
         this.settings.debug      = GM_getValue(`debug`)      || false;
         this.settings.minify     = GM_getValue(`minify`)     || false;
@@ -277,9 +199,8 @@ function WK_Niai()
 
         this.ndb = new NiaiDB();
 
-        if (typeof options !== `undefined` || typeof analyticsOptions !== `undefined`)
-        {
-            this.settings.user_level = (typeof options !== `undefined` ? options : analyticsOptions)[`Current Level`];
+        if (this.settings.user_level > 60 || this.settings.user_level < wkof.user.level) {
+            this.settings.user_level = wkof.user.level;
             GM_setValue(`user_level`, this.settings.user_level);
         }
 
@@ -289,7 +210,7 @@ function WK_Niai()
             } :
             function() {};
 
-        this.ndb.init(this.override_db);
+        await this.ndb.init(this.override_db);
 
         this.log(`The script element is:`, GM_info);
         this.log("The override db is", this.override_db);
@@ -297,10 +218,10 @@ function WK_Niai()
         // #####################################################################
         // Main hook, WK Item Info Injector will kick off this script once the
         // page is ready and we can access the subject of the page.
-        let wkItemInfo = (window.unsafeWindow || window).wkItemInfo;
-        if (wkItemInfo) {
-            wkItemInfo.on(`itemPage,lessonQuiz,review,extraStudy`).forType(`kanji`).under(`reading`).spoiling(`meaning,reading`).notify(this.injectNiaiSection.bind(this));
-            wkItemInfo.on(`lesson`).forType(`kanji`).under(`examples`).notify(this.injectNiaiSection.bind(this));
+        this.wkItemInfoRef = (window.unsafeWindow || window).wkItemInfo;
+        if (this.wkItemInfoRef) {
+            this.wkItemInfoRef.on(`itemPage,lessonQuiz,review,extraStudy`).forType(`kanji`).under(`reading`).spoiling(`meaning,reading`).notifyWhenVisible(this.injectNiaiSection.bind(this));
+            this.wkItemInfoRef.on(`lesson`).forType(`kanji`).under(`examples`).notifyWhenVisible(this.injectNiaiSection.bind(this));
         }
         // #####################################################################
     };
@@ -310,13 +231,10 @@ function WK_Niai()
     WK_Niai.prototype.run = function()
     {
         // Add scripts with guarding namespace (selecting class/id)
-        let bootstrapcss = GM_getResourceText(`bootstrapcss`);
-        GM_addStyle(bootstrapcss
-                        .replace(/\.wk_namespace/g, `#niai_section#niai_section#niai_section#niai_section`));
-        GM_addStyle(bootstrapcss
+        GM_addStyle(GM_getResourceText(`bootstrapcss`)
                         .replace(/wk_namespace/g, GM_info.script.namespace));
         GM_addStyle(GM_getResourceText(`chargrid`)
-                        .replace(/\.wk_namespace/g, `#niai_section#niai_section#niai_section#niai_section`));
+                        .replace(/wk_namespace/g, GM_info.script.namespace));
 
         // #####################################################################
         // Add parts of bootstrap for the modal pages (settings, etc.)
@@ -338,13 +256,12 @@ function WK_Niai()
 
 // #############################################################################
 // #############################################################################
-let promise = typeof wkof !== `undefined` ? (wkof.include(`Jquery`), wkof.ready(`Jquery`)) : new Promise(r => r());
+let promise = typeof wkof !== `undefined` ? (wkof.include(`Jquery, Apiv2`), wkof.ready(`Jquery, Apiv2`)) : new Promise(r => r());
 
 promise.then(() => {
     const wk_niai = new WK_Niai();
 
-    wk_niai.init();
-    wk_niai.run();
+    wk_niai.init().then(() => wk_niai.run());
 });
 // #############################################################################
 // #############################################################################
